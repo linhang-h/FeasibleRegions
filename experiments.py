@@ -319,7 +319,7 @@ experiment_5(hs100, training_sites, testing_sites)
 # # Experiment 6
 # TODO: Combining the other parts together
 
-# In[28]:
+# In[22]:
 
 
 # multi-run training
@@ -346,6 +346,8 @@ def experiment_6(local_eval, sites_per_run, runs, verbose=False):
         # train model
         sm.set_training_values(xt, yt)
         sm.train()
+
+        # compute EI
         x = sample_sites(local_eval.problem(), sites_per_run**2).to_numpy()
         mu = sm.predict_values(x)
         sigma = np.sqrt(sm.predict_variances(x))
@@ -354,12 +356,25 @@ def experiment_6(local_eval, sites_per_run, runs, verbose=False):
         EI_x = (y_max-mu)*stats.norm.cdf(t) + sigma*stats.norm.pdf(t)
         feasible_points = pd.DataFrame(data=np.concatenate((x, EI_x), axis=1), columns=variables + ['EI'])
         feasible_points = feasible_points.sort_values(by='EI', ascending=False).reset_index().drop(['EI', 'index'], axis=1)
+        exp_data = feasible_points.to_numpy()
+
+        # ensure sparse
+        feasible_points = np.zeros((1,len(variables)))
+        while len(feasible_points) < sites_per_run and len(exp_data) > 0:
+            feasible_points = np.append(feasible_points, np.array([exp_data[0]]), axis=0)
+            exp_data = exp_data[1:]
+            dists = np.linalg.norm(exp_data - feasible_points[-1], axis=1)
+            exp_data = exp_data[dists > eps]
+    
+        feasible_points = feasible_points[1:]
+        # evaluate model on testing data
+        feasible_points = pd.DataFrame(data=feasible_points, columns=variables)
         exp_data = evaluate_sites(local_eval, feasible_points)
         
     return exp_data
 
 
-# In[29]:
+# In[26]:
 
 
 hs100 = HS100()
@@ -368,4 +383,10 @@ nind = len(problem['variables'])
 sites_per_run = 20
 runs = 3
 experiment_6(hs100, sites_per_run, runs)
+
+
+# In[ ]:
+
+
+
 
