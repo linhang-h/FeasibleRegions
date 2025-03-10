@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[1]:
+# In[90]:
 
 
 from problems.HS100 import HS100, CallableClass
@@ -19,7 +19,7 @@ import random
 import itertools
 
 
-# In[2]:
+# In[91]:
 
 
 def sample_sites(problem: dict, n_samples: int, seed=random.randint(1,1000)) -> pd.DataFrame:
@@ -63,10 +63,10 @@ def sample_sites(problem: dict, n_samples: int, seed=random.randint(1,1000)) -> 
     return(exp_df)
 
 
-# In[3]:
+# In[92]:
 
 
-def evaluate_sites(local_eval: CallableClass, exp_data: pd.DataFrame, verbose=True):
+def evaluate_sites(local_eval: CallableClass, exp_data: pd.DataFrame, verbose=False):
     """ evaluates sites passed and returns their constraint violation data
 
         Parameters
@@ -95,10 +95,29 @@ def evaluate_sites(local_eval: CallableClass, exp_data: pd.DataFrame, verbose=Tr
     return (exp_data)
 
 
-# In[4]:
+# In[93]:
 
 
-def advanced_testing(local_eval: CallableClass, num_sites_training: int, num_sites_testing : int, verbose=True) -> pd.DataFrame:
+def experiment_1(local_eval: CallableClass, n_samples: int) -> pd.DataFrame:
+    exp_data = sample_sites(local_eval.problem(), n_samples)
+    exp_data = evaluate_sites(local_eval, exp_data, verbose=False)
+    return exp_data
+
+
+# In[94]:
+
+
+hs100 = HS100()
+problem = hs100.problem()
+nind = len(problem['variables'])
+num_sites = 50
+experiment_1(hs100, num_sites)
+
+
+# In[95]:
+
+
+def experiment_2(local_eval: CallableClass, num_sites_training: int, num_sites_testing : int, verbose=True) -> pd.DataFrame:
     """ Wrapper to create an experiment, evaluate the passed in function, create a surrogate model, evaluate model
 
         Parameters
@@ -125,15 +144,16 @@ def advanced_testing(local_eval: CallableClass, num_sites_training: int, num_sit
     yt = exp_data['__conviol__'].to_numpy()
 
     # create model
-    sm = KRG(theta0=[1e-2])
+    sm = KRG(theta0=[1e-2], print_global=False)
     sm.set_training_values(xt, yt)
     sm.train()
 
     # get testing data
-    eps = 1e-6
-    x = sample_sites(local_eval.problem(), num_sites_testing).to_numpy()
-    y = sm.predict_values(x).flatten()
-    feasible_points = pd.DataFrame(data=x[y < eps], columns=variables)
+    x = sample_sites(local_eval.problem(), num_sites_testing**2).to_numpy()
+    y = sm.predict_values(x)
+    feasible_points = pd.DataFrame(data=x, columns=variables)
+    feasible_points['coviol'] = y
+    feasible_points = feasible_points.sort_values(by='coviol').reset_index(drop=True)[:num_sites_testing].drop('coviol', axis=1)
     
     # evaluate model on testing data
     feasible_points = evaluate_sites(local_eval, feasible_points, verbose=verbose)
@@ -141,14 +161,15 @@ def advanced_testing(local_eval: CallableClass, num_sites_training: int, num_sit
     
 
 
-# In[7]:
+# In[96]:
 
 
 hs100 = HS100()
 problem = hs100.problem()
 nind = len(problem['variables'])
-num_sites = 50
-test_data = advanced_testing(hs100, num_sites, num_sites**2)
+num_sites = 25
+test_data = experiment_2(hs100, num_sites, num_sites)
+# print((test_data['__State__'] == 'Feasible').sum())
 test_data
 
 
@@ -157,7 +178,7 @@ test_data
 # 2. Regenerate sites, pass through filter, take the top sites
 # 3. Train again, and repeat
 
-# In[8]:
+# In[97]:
 
 
 # multi-run training
@@ -175,7 +196,7 @@ def experiment_3(local_eval, sites_per_run, runs, verbose=False):
             exp_data = evaluate_sites(local_eval, sample_data, verbose=False)
             training_data = exp_data
         else:
-            training_data = pd.concat([training_data, exp_data], axis=0)
+            training_data = pd.concat([training_data, exp_data], axis=0).drop_duplicates()
         variables = list(local_eval.problem()["variables"].keys())
         xt = training_data[variables].to_numpy()
         yt = training_data['__conviol__'].to_numpy()
@@ -188,13 +209,13 @@ def experiment_3(local_eval, sites_per_run, runs, verbose=False):
         x = sample_sites(local_eval.problem(), sites_per_run**2).to_numpy()
         y = sm.predict_values(x)
         exp_data = pd.DataFrame(data=np.concatenate((x,y), axis=1), columns=variables + ['conviol'])
-        exp_data = exp_data.sort_values(by='conviol').reset_index()[:sites_per_run].drop('conviol',axis=1)
+        exp_data = exp_data.sort_values(by='conviol').reset_index(drop=True)[:sites_per_run].drop('conviol',axis=1)
         # evaluate model on testing data
         exp_data = evaluate_sites(local_eval, exp_data)
     return exp_data
 
 
-# In[9]:
+# In[98]:
 
 
 hs100 = HS100()
@@ -213,11 +234,11 @@ experiment_3(hs100, num_sites, runs)
 #    
 #    Note: Need to choose test sites wisely and tune filter better
 
-# In[22]:
+# In[99]:
 
 
 # weigh with variance
-def experiment_4(local_eval, num_sites_training, num_sites_testing,verbose=True):
+def experiment_4(local_eval, num_sites_training, num_sites_testing,verbose=False):
     # get training data
     sample_data = sample_sites(local_eval.problem(), num_sites_training)
     exp_data = evaluate_sites(local_eval, sample_data, verbose=False)
@@ -239,14 +260,14 @@ def experiment_4(local_eval, num_sites_training, num_sites_testing,verbose=True)
     EI_x = (y_min-mu)*stats.norm.cdf(t) + sigma*stats.norm.pdf(t)
     feasible_points = pd.DataFrame(data=np.concatenate((x, EI_x), axis=1), columns=variables + ['EI'])
     
-    feasible_points = feasible_points.sort_values(by='EI', ascending=False).reset_index()[:num_sites_testing] #.drop('EI',axis=1)
+    feasible_points = feasible_points.sort_values(by='EI', ascending=False).reset_index(drop=True)[:num_sites_testing] #.drop('EI',axis=1)
     
     # evaluate model on testing data
     feasible_points = evaluate_sites(local_eval, feasible_points, verbose=verbose)
     return (feasible_points) 
 
 
-# In[24]:
+# In[100]:
 
 
 hs100 = HS100()
@@ -263,7 +284,7 @@ experiment_4(hs100, training_sites, testing_sites)
 # 2. Select the next possible site and delete the others that are too close
 # 3. Continue until we are left with the appropriate number of sites
 
-# In[15]:
+# In[117]:
 
 
 # filter points that are too close
@@ -285,19 +306,15 @@ def experiment_5(local_eval, num_sites_training, num_sites_testing,verbose=True)
     y = sm.predict_values(x)
     exp_data = pd.DataFrame(data=np.concatenate((x,y), axis=1), columns=variables + ['conviol'])
     exp_data = exp_data.sort_values(by='conviol').reset_index().drop('conviol',axis=1).drop('index', axis=1).to_numpy()
-    eps = 3 # not sure how to decide this
+    eps = 1 # not sure how to decide this
     feasible_points = np.zeros((1,len(variables)))
-    
-    total_filtered = 0
-    
+        
     while len(feasible_points) < num_sites_testing and len(exp_data) > 0:
         feasible_points = np.append(feasible_points, np.array([exp_data[0]]), axis=0)
         exp_data = exp_data[1:]
         dists = np.linalg.norm(exp_data - feasible_points[-1], axis=1)
-        total_filtered += len(exp_data) - len(exp_data[dists > eps])
         exp_data = exp_data[dists > eps]
 
-    print(total_filtered)
     feasible_points = feasible_points[1:]
     # evaluate model on testing data
     feasible_points = pd.DataFrame(data=feasible_points, columns=variables)
@@ -305,7 +322,7 @@ def experiment_5(local_eval, num_sites_training, num_sites_testing,verbose=True)
     return feasible_points
 
 
-# In[16]:
+# In[102]:
 
 
 hs100 = HS100()
@@ -317,9 +334,9 @@ experiment_5(hs100, training_sites, testing_sites)
 
 
 # # Experiment 6
-# TODO: Combining the other parts together
+# Combine the other parts together
 
-# In[22]:
+# In[103]:
 
 
 # multi-run training
@@ -338,7 +355,7 @@ def experiment_6(local_eval, sites_per_run, runs, verbose=False):
             exp_data = evaluate_sites(local_eval, sample_data, verbose=False)
             training_data = exp_data
         else:
-            training_data = pd.concat([training_data, exp_data], axis=0)
+            training_data = pd.concat([training_data, exp_data], axis=0).drop_duplicates()
         variables = list(local_eval.problem()["variables"].keys())
         xt = training_data[variables].to_numpy()
         yt = np.log(training_data['__conviol__'].to_numpy() + eps)
@@ -374,15 +391,47 @@ def experiment_6(local_eval, sites_per_run, runs, verbose=False):
     return exp_data
 
 
-# In[26]:
+# In[107]:
 
 
 hs100 = HS100()
 problem = hs100.problem()
 nind = len(problem['variables'])
 sites_per_run = 20
-runs = 3
+runs = 5
 experiment_6(hs100, sites_per_run, runs)
+
+
+# # Benchmark experiments against each other
+
+# In[119]:
+
+
+total_sites = [20, 30, 50, 75, 100]
+hs100 = HS100()
+problem = hs100.problem()
+results = pd.DataFrame(columns=['Random Points','Simple Surrogate Model','Multi-Run','EI','Sparseness', 'All combined'])
+
+for ts in total_sites:
+    cur_results = [0]*6
+    runs = 5
+    sites_per_run = ts//runs
+    cur_results[0] = (experiment_1(hs100, ts)['__State__'] == 'Feasible').sum()
+    cur_results[1] = (experiment_2(hs100, ts//2, ts//2, verbose=False)['__State__'] == 'Feasible').sum()
+    cur_results[2] = (experiment_3(hs100, sites_per_run, runs, verbose=False)['__State__'] == 'Feasible').sum()
+    cur_results[3] = (experiment_4(hs100, ts//2, ts//2, verbose=False)['__State__'] == 'Feasible').sum()
+    cur_results[4] = (experiment_5(hs100, ts//2, ts//2, verbose=False)['__State__'] == 'Feasible').sum()
+    cur_results[5] = (experiment_6(hs100, sites_per_run, runs, verbose=False)['__State__'] == 'Feasible').sum()
+    results = pd.concat([results, pd.DataFrame(data=[cur_results], columns=results.columns)], ignore_index=True)
+    print(ts)
+    print(cur_results)
+results = pd.DataFrame(results.to_numpy(),total_sites, results.columns)
+
+
+# In[121]:
+
+
+results.plot.bar()
 
 
 # In[ ]:
